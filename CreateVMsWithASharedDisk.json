@@ -1,0 +1,257 @@
+        },
+        "osDiskType": {
+          "type": "string",
+          "defaultValue": "StandardSSD_LRS",
+          "allowedValues": [
+            "Standard_LRS",
+            "Premium_LRS",
+            "StandardSSD_LRS",
+            "StandardSSD_ZRS",
+            "Premium_ZRS"
+          ]
+        },
+        "dataDiskType": {
+          "type": "string",
+          "defaultValue": "StandardSSD_LRS",
+          "allowedValues": [
+            "Standard_LRS",
+            "Premium_LRS",
+            "StandardSSD_LRS",
+            "StandardSSD_ZRS",
+            "Premium_ZRS"
+          ]
+        },
+        "osDiskSizeInGb": {
+          "type": "int",
+          "defaultValue": 128
+        },
+        "dataDiskSizeInGb": {
+            "type": "int",
+            "minValue": 256,
+            "maxValue": 32767,
+            "metadata": {
+                "description": "Size of shared data disk for cluster in GB (Min=256, Max=32767)"
+            },
+            "defaultValue": 1023
+        }, 
+        "osType": {
+          "type": "string",
+          "defaultValue": "Windows",
+          "allowedValues": [
+            "Windows",
+            "Linux"
+          ]
+        },
+        "region": {
+          "type": "string",
+          "defaultValue": "eastus2euap"
+        }
+    },
+    "variables": {        
+        "dataDiskName": "[concat(parameters('vmNamePrefix'),'-datadisk0')]",
+        "dataDisks": [
+            {
+                "lun": 0,
+                "name": "[variables('dataDiskName')]",
+                "createOption": "attach",
+                "managedDisk": {
+                    "id": "[resourceId('Microsoft.Compute/disks/', variables('dataDiskName'))]"
+                }
+            }
+        ],
+        "diskMaxShares": 3,
+        "vmCount": 3,
+        "vmLoopMode": "serial",
+        "vmImagePublisher": "MicrosoftWindowsServer",
+        "vmImageOffer": "WindowsServer",
+        "vmImageSku": "2019-Datacenter",
+        "vmImageVersion": "latest",
+        "virtualNetworkName": "shareddisk_vnet",
+        "subnetName": "[concat(toLower(parameters('vmNamePrefix')),'-subnet')]",
+        "subnetRef": "[resourceId('Microsoft.Network/virtualNetworks/subnets', variables('virtualNetworkName'), variables('subnetName'))]",
+        "addressPrefix": "170.2.3.0/24",
+        "subnetPrefix": "170.2.3.0/24",
+        "windowsImage": {
+      "sku": "2016-Datacenter",
+      "publisher": "MicrosoftWindowsServer",
+      "version": "latest",
+      "offer": "WindowsServer"
+    },
+    "linuxImage": {
+      "sku": "18.04-LTS",
+      "publisher": "Canonical",
+      "version": "latest",
+      "offer": "UbuntuServer"
+    }
+    },
+    "resources": [
+        {
+            "apiVersion": "2018-01-01",
+            "name": "[variables('virtualNetworkName')]",
+            "type": "Microsoft.Network/virtualNetworks",
+            "location": "[parameters('region')]",
+            "properties": {
+                "addressSpace": {
+                    "addressPrefixes": [
+                        "[variables('addressPrefix')]"
+                    ]
+                },
+                "subnets": [
+                    {
+                        "name": "[variables('subnetName')]",
+                        "properties": {
+                            "addressPrefix": "[variables('subnetPrefix')]"
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "name": "[variables('dataDiskName')]",
+            "type": "Microsoft.Compute/disks",
+            "location": "[parameters('region')]",
+            "apiVersion": "2020-12-01",
+            "sku": {
+                "name": "[parameters('dataDiskType')]"
+            },
+            "properties": {
+                "creationData": {
+                    "createOption": "Empty"
+                },
+                "diskSizeGB": "[parameters('dataDiskSizeInGb')]",
+                "maxShares": "[variables('diskMaxShares')]"
+            }
+        },
+        {
+          "type": "Microsoft.Network/publicIPAddresses",
+          "name": "[concat(parameters('vmNamePrefix'), copyindex(), 'ip')]",
+          "location": "[parameters('region')]",
+          "apiVersion": "2020-05-01",
+          "sku": {
+            "name": "Standard"
+          },
+          "zones": ["[add(copyindex(), 1)]"],
+          "copy": {
+                "name": "ipLoop",
+                "count": "[variables('vmCount')]"
+            },
+          "properties": {
+            "publicIPAllocationMethod": "Static"
+          }
+        },
+        {
+          "type": "Microsoft.Network/networkSecurityGroups",
+          "apiVersion": "2020-06-01",
+          "name": "[concat(parameters('vmNamePrefix'), copyindex(), 'nsg')]",
+          "location": "[parameters('region')]",
+          "copy": {
+                "name": "nsgLoop",
+                "count": "[variables('vmCount')]"
+          },
+          "properties": {
+            "securityRules": [
+              {
+                  "name": "Port_3389",
+                  "properties": {
+                      "protocol": "TCP",
+                      "sourcePortRange": "*",
+                      "destinationPortRange": "3389",
+                      "sourceAddressPrefix": "*",
+                      "destinationAddressPrefix": "*",
+                      "access": "Allow",
+                      "priority": 100,
+                      "direction": "Inbound",
+                      "sourcePortRanges": [],
+                      "destinationPortRanges": [],
+                      "sourceAddressPrefixes": [],
+                      "destinationAddressPrefixes": []
+                  }
+              }
+            ]
+          }
+        },
+        {
+            "name": "[concat(parameters('vmNamePrefix'), copyindex(), '-nic')]",
+            "type": "Microsoft.Network/networkInterfaces",
+            "location": "[parameters('region')]",
+            "dependsOn": [
+               "[resourceId('Microsoft.Network/publicIPAddresses',concat(parameters('vmNamePrefix'), copyindex(), 'ip'))]",
+               "[resourceId('Microsoft.Network/networkSecurityGroups',concat(parameters('vmNamePrefix'), copyindex(), 'nsg'))]"
+            ],
+            "apiVersion": "2019-11-01",
+            "copy": {
+                "name": "nicLoop",
+                "count": "[variables('vmCount')]"
+            },
+            "properties": {
+                "ipConfigurations": [
+                    {
+                        "name": "ipconfig0",
+                        "properties": {
+                            "privateIPAllocationMethod": "Dynamic",
+                            "publicIPAddress": {
+                            "id": "[resourceId('Microsoft.Network/publicIPAddresses',concat(parameters('vmNamePrefix'), copyindex(), 'ip'))]"  
+                            },
+                            "subnet": {
+                                "id": "[variables('subnetRef')]"
+                            }
+                        }
+                    }
+                ],
+                "enableAcceleratedNetworking": "[parameters('enableAcceleratedNetworking')]",
+                "networkSecurityGroup": {
+                  "id": "[resourceId('Microsoft.Network/networkSecurityGroups',concat(parameters('vmNamePrefix'), copyindex(), 'nsg'))]"
+                }
+            }
+        },
+        {
+            "type": "Microsoft.Compute/virtualMachines",
+            "apiVersion": "2020-12-01",
+            "name": "[concat(parameters('vmNamePrefix'), copyindex())]",
+            "location": "[parameters('region')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Network/networkInterfaces',concat(parameters('vmNamePrefix'), copyindex(), '-nic'))]",
+                "[resourceId('Microsoft.Compute/disks', variables('dataDiskName'))]"
+            ],
+              "zones": [
+                "[add(copyindex(), 1)]"
+              ],
+            "properties": {
+                "hardwareProfile": {
+                    "vmSize": "[parameters('vmSize')]"
+                },
+                "osProfile": {
+                    "computerName": "[concat(parameters('vmNamePrefix'), copyindex())]",
+                    "adminUsername": "[parameters('adminUsername')]",
+                    "adminPassword": "[parameters('adminPassword')]"
+                },
+                "storageProfile": {
+                    "imageReference": "[if(equals(parameters('osType'), 'Windows'), variables('windowsImage'), variables('linuxImage'))]",
+                    "osDisk": {
+                        "name": "[concat(parameters('vmNamePrefix'), copyindex(), '-osdisk')]",
+                        "caching": "ReadWrite",
+                        "createOption": "FromImage",
+                        "managedDisk": {
+                            "storageAccountType": "[parameters('osDiskType')]"
+                        }
+                    },
+                    "dataDisks": "[variables('dataDisks')]"
+                },
+                "networkProfile": {
+                    "networkInterfaces": [
+                        {
+                            "id": "[resourceId('Microsoft.Network/networkInterfaces',concat(parameters('vmNamePrefix'), copyindex(), '-nic'))]"
+                        }
+                    ]
+                }
+            },
+            "copy": {
+                "name": "vmLoop",
+                "mode": "[variables('vmLoopMode')]",
+                "count": "[variables('vmCount')]"
+            }
+        }
+    ],
+    "outputs": {
+    }
+}
